@@ -1,32 +1,30 @@
 const express = require('express');
 const app = express();
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-let targetServers = [];
+let serverList = [];
 
-app.get('/api/servers', (req, res) => {
-    res.json(targetServers);
-});
-
-app.post('/api/servers', (req, res) => {
-    const { jobId, item, owner } = req.body;
-    
-    if (jobId) {
-        targetServers.unshift({
-            jobId: jobId,
-            item: item || "Unknown",
-            owner: owner || "Unknown",
-            time: new Date().toISOString()
-        });
-        
-        if (targetServers.length > 30) targetServers.pop();
-        return res.json({ status: "success", message: "Data added" });
+app.post('/update', (req, res) => {
+    const data = req.body;
+    if (data && data.jobId) {
+        const index = serverList.findIndex(s => s.jobId === data.jobId);
+        if (index >= 0) {
+            serverList[index] = data;
+        } else {
+            serverList.push(data);
+        }
+        res.status(200).json({ success: true });
+    } else {
+        res.status(400).json({ error: "Invalid data" });
     }
-    res.status(400).json({ status: "error", message: "Invalid jobId" });
 });
 
-const PORT = process.env.PORT || 3000;
+app.get('/servers', (req, res) => {
+    res.json(serverList);
+});
+
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
