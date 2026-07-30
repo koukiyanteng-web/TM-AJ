@@ -1,79 +1,50 @@
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
+// ========================================================
+// 外部ツールの全サーバーデータを自サイトへ中継する処理
+// ========================================================
+const WebSocketClient = require('ws');
 
-const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+// ステップ1でコピーしたURLをここに貼り付ける
+const TARGET_WS_URL = 'wss://ここにコピーしたURLを貼り付け';
 
-const PORT = process.env.PORT || 3000;
+function connectToDataStream() {
+    const sourceWs = new WebSocketClient(TARGET_WS_URL);
 
-app.use(express.static('public'));
-app.use(express.json());
+    sourceWs.on('open', () => {
+        console.log('データ元への接続成功！全サーバーデータの自動取得を開始します。');
+    });
 
-// 全サーバーのデータをリアルタイム保持するメモリ
-let globalServers = {};
+    sourceWs.on('message', (data) => {
+        try {
+            const rawServers = JSON.parse(data);
 
-// 数値変換関数（$/s計算用）
-function parseRate(str) {
-    if (!str) return 0;
-    const match = str.match(/(\d+(?:\.\d+)?)\s*([KMBTQa-z]*)\/s/i);
-    if (!match) return 0;
-    const val = parseFloat(match[1]);
-    const unit = (match[2] || '').toUpperCase();
-    const mult = { 'K': 1e3, 'M': 1e6, 'B': 1e9, 'T': 1e12, 'QA': 1e15, 'QI': 1e18 };
-    return val * (mult[unit] || 1);
-}
+            // 届いた全サーバー情報を自分のメモリ(globalServers)に読み込む
+            if (Array.isArray(rawServers)) {
+                rawServers.forEach(item => {
+                    globalServers[item.jobId || item.id] = {
+                        jobId: item.jobId || item.id,
+                        players: item.players || '0/8',
+                        brainrots: item.brainrot || item.name || '検出中',
+                        joinUrl: `roblox://experiences/start?placeId=12345678&gameInstanceId=${item.jobId || item.id}`,
+                        maxRate: parseRate(item.incomeRate || item.rate || '0'),
+                        updatedAt: Date.now()
+                    };
+                });
 
-// 外部からデータを受信するAPIエンドポイント
-app.post('/api/report', (req, res) => {
-    const { jobId, players, brainrots, joinUrl } = req.body;
-    if (!jobId) return res.status(400).send('No JobID');
-
-    const maxRate = parseRate(brainrots);
-
-    // データを更新
-    globalServers[jobId] = {
-        jobId,
-        players: players || '0/8',
-        brainrots: brainrots || '情報なし',
-        joinUrl,
-        maxRate,
-        updatedAt: Date.now()
-    };
-
-    // 接続中の全ブラウザに即時リアルタイム配信（WebSocket）
-    broadcastServerData();
-
-    res.json({ success: true });
-});
-
-// 全ブラウザへデータを一括送信する関数
-function broadcastServerData() {
-    // 10分以上古いサーバーをクリーニング
-    const now = Date.now();
-    for (let id in globalServers) {
-        if (now - globalServers[id].updatedAt > 10 * 60 * 1000) {
-            delete globalServers[id];
-        }
-    }
-
-    // 全サーバーを $/s の高い順にソート
-    const sortedList = Object.values(globalServers).sort((a, b) => b.maxRate - a.maxRate);
-    const payload = JSON.stringify(sortedList);
-
-    // サイトを開いている全ユーザーに一斉送信
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(payload);
+                // 自分のWebサイト（ダッシュボード）に一括プッシュ！
+                broadcastServerData();
+            }
+        } catch (err) {
+            // 単発データの形式に合わせて処理
         }
     });
+
+    // 通信が切れたら自動で再接続
+    sourceWs.on('close', () => {
+        setTimeout(connectToDataStream, 3000);
+    });
+
+    sourceWs.on('error', (err) => console.error('通信エラー:', err.message));
 }
 
-// WebSocket接続時の処理（サイトを開いた瞬間に全データを即座に送信）
-wss.on('connection', (ws) => {
-    const sortedList = Object.values(globalServers).sort((a, b) => b.maxRate - a.maxRate);
-    ws.send(JSON.stringify(sortedList)); // 開いた瞬間に一括プッシュ！
-});
-
-server.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+// データ中継スタート
+connectToDataStream();
