@@ -4,31 +4,40 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const PLACE_ID = "109983668079237"; // Steal a Brainrot
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
-// 確定ターゲットサーバーだけを保持するマップ
+// ターゲットサーバー保持用マップ
 let targetServers = new Map();
 
-// 1. Luaスクリプト（Delta）から激レアブレインロットの通知を受け取る
+// 1. スクリプトからのデータ受け取り（複数キャラ・$M/sリスト対応）
 app.post('/api/servers', (req, res) => {
-    const { jobId, brainrot, income, playing } = req.body;
+    const { jobId, brainrots, brainrot, income, playing, maxPlayers } = req.body;
     
     if (!jobId) return res.status(400).send({ error: 'JobId required' });
 
-    // 届いたデータを確定ターゲットとして保存
+    // キャラのリストを配列に整形（配列でもカンマ区切り文字列でもOK）
+    let list = [];
+    if (Array.isArray(brainrots)) {
+        list = brainrots;
+    } else if (typeof brainrots === 'string') {
+        list = brainrots.split(',').map(item => item.trim());
+    } else if (brainrot) {
+        list = [`${brainrot} ${income || ''}`];
+    }
+
     targetServers.set(jobId, {
         id: jobId,
-        brainrot: brainrot || '🔥 激レアブレインロット',
-        income: income || '高収益',
-        playing: playing || '1',
+        brainrots: list,
+        playing: playing || 3,
+        maxPlayers: maxPlayers || 8,
         createdAt: Date.now()
     });
 
-    console.log(`[🎯 ターゲット検知] ID: ${jobId} | ブレインロット: ${brainrot} | 収益: ${income}`);
+    console.log(`[🎯 サーバー更新] ID: ${jobId} | キャラ数: ${list.length}`);
     res.status(200).send({ status: 'success' });
 });
 
-// 定期クリーンアップ：5分以上経った古いターゲットは自動削除（満員・移動済み対策）
+// 古くなったターゲットの自動削除（5分経過で消去）
 setInterval(() => {
     const NOW = Date.now();
     for (const [id, server] of targetServers.entries()) {
@@ -38,14 +47,13 @@ setInterval(() => {
     }
 }, 10000);
 
-// 2. フロントエンド用 JSON（ターゲットのみ返却）
+// 2. フロントエンド用 API
 app.get('/api/servers-json', (req, res) => {
-    // 新しい順（最新見つけた順）に並べて返却
     const list = Array.from(targetServers.values()).sort((a, b) => b.createdAt - a.createdAt);
     res.json(list);
 });
 
-// 3. スマホ用 確定スナイパーダッシュボード UI
+// 3. 画像デザイン完全再現 ダッシュボード UI
 app.get('/', (req, res) => {
     const html = `
     <!DOCTYPE html>
@@ -53,33 +61,39 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Brainrot Sniper - Target Only</title>
+        <title>Brainrot Sniper UI</title>
         <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0b0e; color: #fff; padding: 12px; margin: 0; }
-            h1 { font-size: 20px; text-align: center; color: #ff4757; margin: 5px 0 2px 0; text-transform: uppercase; letter-spacing: 1px; }
-            .subtitle { font-size: 11px; text-align: center; color: #ffa502; margin-bottom: 12px; font-weight: bold; }
+            * { box-sizing: border-box; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #12131a; color: #fff; padding: 8px; margin: 0; }
             
-            .stats-bar { background: #1e1f29; padding: 10px; border-radius: 8px; font-size: 12px; font-weight: bold; text-align: center; margin-bottom: 12px; color: #ff4757; border: 1px solid #ff4757; box-shadow: 0 0 10px rgba(255,71,87,0.2); }
+            .header-bar { text-align: center; font-size: 13px; color: #aaa; margin-bottom: 8px; font-weight: bold; }
             
-            .server-card { background: #2f1215; padding: 14px; border-radius: 10px; margin-bottom: 10px; border: 2px solid #ff4757; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 0 12px rgba(255, 71, 87, 0.4); animation: pulse 1.2s infinite alternate; }
-            @keyframes pulse { from { border-color: #ff4757; box-shadow: 0 0 8px rgba(255, 71, 87, 0.4); } to { border-color: #ffa502; box-shadow: 0 0 16px rgba(255, 165, 2, 0.7); } }
+            .server-card { background: #1c1e28; border: 1px solid #2d3142; border-radius: 6px; padding: 10px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
             
-            .server-info { font-size: 13px; line-height: 1.5; }
-            .brainrot-title { font-size: 15px; font-weight: bold; color: #fff; text-shadow: 0 0 5px #ff4757; margin-bottom: 2px; }
-            .income-text { font-size: 12px; color: #2ed573; font-weight: bold; }
-            .meta-text { font-size: 10px; color: #a4b0be; margin-top: 4px; }
+            /* キャラクターリスト表示エリア */
+            .brainrot-list { font-size: 13px; line-height: 1.45; color: #e0e0e0; font-weight: 500; margin-bottom: 12px; word-break: break-word; }
+            .brainrot-item { display: inline; }
+            .brainrot-item::after { content: ", "; color: #888; }
+            .brainrot-item:last-child::after { content: ""; }
             
-            .join-btn { background: #ff4757; color: white; padding: 12px 18px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px; white-space: nowrap; box-shadow: 0 0 10px #ff4757; }
-            .join-btn:active { transform: scale(0.92); }
+            /* カード下部のコントロールレイヤー */
+            .card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
             
-            .empty-state { text-align: center; padding: 40px 20px; color: #747d8c; font-size: 13px; line-height: 1.6; }
+            .player-count { display: flex; align-items: center; gap: 6px; font-size: 26px; font-weight: 800; color: #a4b0be; white-space: nowrap; }
+            .player-icon { width: 24px; height: 24px; fill: #2e86de; }
+            
+            .btn-group { display: flex; gap: 8px; }
+            
+            .btn { display: inline-flex; align-items: center; justify-content: center; padding: 8px 18px; border-radius: 6px; font-weight: 900; font-size: 20px; text-decoration: none; letter-spacing: 1px; cursor: pointer; border: none; }
+            .btn-spam { background: #4b6584; color: #d1d8e0; }
+            .btn-join { background: #2e86de; color: #ffffff; box-shadow: 0 0 10px rgba(46, 134, 222, 0.5); }
+            .btn:active { transform: scale(0.95); }
+
+            .empty-msg { text-align: center; color: #777; padding: 40px 10px; font-size: 13px; }
         </style>
     </head>
     <body>
-        <h1>🎯 Brainrot Sniper</h1>
-        <div class="subtitle">⚡ 激レア・高収益ターゲット自動検知中</div>
-        
-        <div id="stats" class="stats-bar">📡 ターゲット監視中...</div>
+        <div id="stats" class="header-bar">📡 ターゲット監視中...</div>
         <div id="server-list"></div>
 
         <script>
@@ -90,12 +104,11 @@ app.get('/', (req, res) => {
                     const res = await fetch('/api/servers-json');
                     const servers = await res.json();
                     
-                    document.getElementById('stats').innerHTML = '🎯 検出中の確定ターゲット: <span style="font-size:16px;">' + servers.length + '</span> 件';
+                    document.getElementById('stats').innerText = '🎯 検出中サーバー: ' + servers.length + ' 件';
                     
                     const container = document.getElementById('server-list');
-                    
                     if (servers.length === 0) {
-                        container.innerHTML = '<div class="empty-state">🧠 現在、条件に合うターゲットはありません。<br>Deltaでスクリプトを実行して放置してください...</div>';
+                        container.innerHTML = '<div class="empty-msg">🧠 ターゲットデータ受信待機中...</div>';
                         return;
                     }
 
@@ -103,14 +116,27 @@ app.get('/', (req, res) => {
                     servers.forEach(s => {
                         const joinUrl = 'roblox://placeID=' + placeId + '&gameInstanceId=' + s.id;
                         
+                        // キャラのリスト生成
+                        let itemsHtml = '';
+                        if (s.brainrots && s.brainrots.length > 0) {
+                            itemsHtml = s.brainrots.map(item => '<span class="brainrot-item">' + item + '</span>').join('');
+                        } else {
+                            itemsHtml = '<span class="brainrot-item">🔥 激レアターゲット検出</span>';
+                        }
+
                         html += \`
                             <div class="server-card">
-                                <div class="server-info">
-                                    <div class="brainrot-title">🧠 \${s.brainrot}</div>
-                                    <div class="income-text">💰 収益: \${s.income}</div>
-                                    <div class="meta-text">👥 検出時人数: \${s.playing}人 | ID: \${s.id.slice(0,8)}...</div>
+                                <div class="brainrot-list">\${itemsHtml}</div>
+                                <div class="card-bottom">
+                                    <div class="player-count">
+                                        <svg class="player-icon" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                                        \${s.playing}/\${s.maxPlayers}
+                                    </div>
+                                    <div class="btn-group">
+                                        <a href="\${joinUrl}" class="btn btn-spam">SPAM</a>
+                                        <a href="\${joinUrl}" class="btn btn-join">JOIN</a>
+                                    </div>
                                 </div>
-                                <a href="\${joinUrl}" class="join-btn">🚨 即突入！</a>
                             </div>
                         \`;
                     });
@@ -120,7 +146,6 @@ app.get('/', (req, res) => {
                 }
             }
 
-            // 0.3秒間隔で超高速更新
             setInterval(updateList, 300);
             updateList();
         </script>
@@ -131,5 +156,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Target-Only Sniper Server running on port ${PORT}`);
+    console.log(`Brainrot Sniper UI running on port ${PORT}`);
 });
