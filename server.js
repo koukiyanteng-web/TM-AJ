@@ -1,74 +1,62 @@
 const express = require('express');
+const axios = require('axios');
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
 
-// サーバーごとの稼ぎ額やブレインロットのデータを一時保存するメモリ
+// 各サーバーから送られてきたデータを保存するメモリ上のストレージ
+// { "jobId": { bestBrainrot: "...", money: "...", playerCount: X, maxPlayers: Y } }
 let serverDataStore = {};
 
-app.get('/secure', (req, res) => {
-    res.status(200).json({ success: true, message: "Connected successfully" });
-});
-
-// Roblox側から「今のサーバーのデータ」を受け取るエンドポイント (POST)
+// 1. Robloxクライアントから定期的に送られてくるデータを保存
 app.post('/update', (req, res) => {
-    const { jobId, bestBrainrot, money } = req.body;
-    if (!jobId) {
-        return res.status(400).json({ error: "jobId is required" });
+    const { jobId, bestBrainrot, money, playerCount, maxPlayers } = req.body;
+    if (jobId) {
+        serverDataStore[jobId] = {
+            jobId,
+            bestBrainrot: bestBrainrot || "不明",
+            money: money || "0",
+            playerCount: playerCount || 1,
+            maxPlayers: maxPlayers || 20,
+            lastUpdated: Date.now()
+        };
     }
-
-    serverDataStore[jobId] = {
-        bestBrainrot: bestBrainrot || "不明",
-        money: money || "不明",
-        updatedAt: Date.now()
-    };
-
-    res.json({ success: true });
+    res.sendStatus(200);
 });
 
-// リスト表示用エンドポイント (GET)
+// 2. Robloxクライアント（UI）からのリクエストに対し、実際の全サーバー一覧と蓄積データを統合して返す
 app.get('/servers', async (req, res) => {
-    let placeId = req.query.placeId;
-    
-    if (!placeId) {
-        return res.status(400).json({ error: "PlaceId is required" });
-    }
+    const placeId = req.query.placeId;
+    if (!placeId) return res.status(400).json({ error: "placeId is required" });
 
     try {
-        let servers = [];
+        // Roblox公式の公開サーバーリストAPIを叩いて、現在の実際の全サーバーを取得
+        const robloxApiUrl = `https://games.roblox.com/v1/games/${placeId}/servers/Public?limit=100`;
+        const response = await axios.get(robloxApiUrl);
+        const robloxServers = response.data.data || [];
 
-        // 1. Roblox公式からサーバー一覧を取得
-        const url1 = `https://games.roblox.com/v1/games/${placeId}/servers/Public?sortOrder=Asc&limit=100`;
-        const res1 = await fetch(url1, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-        });
-        const data1 = await res1.json();
-        if (data1 && data1.data) {
-            servers = data1.data;
-        }
-
-        // 2. 取得したサーバー情報に、保存されている稼ぎデータ等を合体させる
-        const serverList = servers.map(server => {
-            const extraData = serverDataStore[server.id] || { bestBrainrot: "データなし", money: "データなし" };
+        // 公式のサーバーリストと、私たちが集めた詳細データを合体させる
+        const mergedServers = robloxServers.map(server => {
+            const stored = serverDataStore[server.id];
             return {
                 jobId: server.id,
                 playerCount: server.playing,
                 maxPlayers: server.maxPlayers,
-                bestBrainrot: extraData.bestBrainrot,
-                money: extraData.money
+                // データがあればそれを使い、なければ「データなし」とする
+                bestBrainrot: stored ? stored.bestBrainrot : "データなし",
+                money: stored ? stored.money : "-"
             };
         });
 
-        res.json(serverList);
+        res.json(mergedServers);
     } catch (error) {
-        console.error("Error fetching servers:", error);
-        res.status(500).json({ error: "Failed to fetch servers", details: error.message });
+        console.error("Failed to fetch Roblox servers:", error.message);
+        // 万が一公式API制限等で失敗した場合は、手元にあるデータだけでも返す
+        const fallback = Object.values(serverDataStore);
+        res.json(fallback);
     }
 });
 
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
