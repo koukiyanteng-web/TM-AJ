@@ -9,39 +9,24 @@ app.get('/secure', (req, res) => {
 });
 
 app.get('/servers', async (req, res) => {
-    let placeId = req.query.placeId;
+    const placeId = req.query.placeId;
     
     if (!placeId) {
         return res.status(400).json({ error: "PlaceId is required" });
     }
 
     try {
-        // 1. まずPlaceIdからUniverseId（RootPlaceId）を特定する、または直接APIを叩く
-        let targetPlaceId = placeId;
-        
-        // RobloxのゲームAPIからサーバー一覧を取得
-        const url = `https://games.roblox.com/v1/games/${targetPlaceId}/servers/Public?sortOrder=Asc&limit=100`;
-        const response = await fetch(url);
-        const data = await response.json();
-
-        let servers = data.data || [];
-
-        // もしサーバーが空の場合、PlaceIdからUniverseIDを逆引きして再トライする仕組み
-        if (servers.length === 0) {
-            try {
-                const infoRes = await fetch(`https://apis.roblox.com/universes/v1/places/${placeId}/universe`);
-                const infoData = await infoRes.json();
-                if (infoData && infoData.universeId) {
-                    // ユニバースIDからルートプレイスを取得するか、別ルートを試す
-                    const univUrl = `https://games.roblox.com/v1/games/${infoData.universeId}/servers/Public?sortOrder=Asc&limit=100`;
-                    const univRes = await fetch(univUrl);
-                    const univData = await univRes.json();
-                    servers = univData.data || [];
-                }
-            } catch (e) {
-                console.log("Universe lookup failed:", e.message);
+        // Robloxにボットだとバレないように、通常のブラウザのUser-Agentヘッダーを付与してリクエストする
+        const url = `https://games.roblox.com/v1/games/${placeId}/servers/Public?sortOrder=Asc&limit=100`;
+        const response = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json"
             }
-        }
+        });
+        
+        const data = await response.json();
+        const servers = data.data || [];
 
         const serverList = servers.map(server => ({
             jobId: server.id,
