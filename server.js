@@ -9,18 +9,28 @@ app.use(express.json());
 // 全サーバー保持用
 let serverMap = new Map();
 
-// 1. Roblox公式APIを極限のスピードでバックグラウンドスキャン
+// 1. Roblox公式APIを極限のスピードでバックグラウンドスキャン (ヘッダー偽装追加)
 async function scanAllPublicServers() {
     try {
         let cursor = "";
-        const maxPages = 3; // スキャン速度優先で上位300サーバーに絞り込み
+        const maxPages = 3; // 上位300サーバーに絞り込み
         const currentBatch = new Map();
 
         for (let i = 0; i < maxPages; i++) {
             const url = `https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public?limit=100${cursor ? `&cursor=${cursor}` : ''}`;
-            const response = await fetch(url);
             
-            if (!response.ok) break;
+            // Robloxのブロックを回避するためのUser-Agentヘッダー
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json'
+                }
+            });
+            
+            if (!response.ok) {
+                console.error(`Roblox API Error: ${response.status}`);
+                break;
+            }
 
             const data = await response.json();
             if (data.data && data.data.length > 0) {
@@ -31,9 +41,9 @@ async function scanAllPublicServers() {
                         playing: s.playing,
                         maxPlayers: s.maxPlayers,
                         ping: s.ping || 'N/A',
-                        brainrot: existing ? existing.brainrot : null, // 条件一致データ
+                        brainrot: existing ? existing.brainrot : null,
                         income: existing ? existing.income : null,
-                        isTarget: existing ? existing.isTarget : false, // ターゲットフラグ
+                        isTarget: existing ? existing.isTarget : false,
                         lastSeen: Date.now()
                     });
                 });
@@ -46,9 +56,11 @@ async function scanAllPublicServers() {
             }
         }
 
-        serverMap = currentBatch;
+        if (currentBatch.size > 0) {
+            serverMap = currentBatch;
+        }
     } catch (e) {
-        console.error("スキャンエラー:", e);
+        console.error("スキャン通信エラー:", e);
     }
 }
 
@@ -56,7 +68,7 @@ async function scanAllPublicServers() {
 setInterval(scanAllPublicServers, 1500);
 scanAllPublicServers();
 
-// 2. Luaスクリプトから条件一致（激レア発見）の通知をミリ秒で受領
+// 2. Luaスクリプトから条件一致通知をミリ秒受領
 app.post('/api/servers', (req, res) => {
     const { jobId, brainrot, income } = req.body;
     if (!jobId) return res.status(400).send({ error: 'JobId required' });
@@ -68,22 +80,19 @@ app.post('/api/servers', (req, res) => {
         ping: 'FAST',
         brainrot: brainrot || '🔥 レアターゲット発見！',
         income: income || '高収益',
-        isTarget: true, // 最優先ターゲットとしてフラグON
+        isTarget: true,
         lastSeen: Date.now()
     };
 
-    // 即座にメモリの先頭へセット
     serverMap.set(jobId, serverData);
     res.status(200).send({ status: 'success' });
 });
 
-// フロントエンド用 JSON（ターゲット検知済みサーバーを最優先で最上部にソート）
+// フロントエンド用 JSON
 app.get('/api/servers-json', (req, res) => {
     const list = Array.from(serverMap.values()).sort((a, b) => {
-        // 条件に合ったターゲット（isTarget）を一番上に強制配置！
         if (a.isTarget && !b.isTarget) return -1;
         if (!a.isTarget && b.isTarget) return 1;
-        // 次に空きプレイヤー数順
         return a.playing - b.playing;
     });
     res.json(list);
@@ -105,8 +114,6 @@ app.get('/', (req, res) => {
             .stats-bar { background: #1e1f29; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; text-align: center; margin-bottom: 10px; color: #2ed573; border: 1px solid #2f3542; }
             
             .server-card { background: #14151d; padding: 10px 12px; border-radius: 8px; margin-bottom: 8px; border: 1px solid #2f3542; display: flex; justify-content: space-between; align-items: center; }
-            
-            /* 条件に一致した「当たりサーバー」の極太警告スタイル */
             .server-card.target { background: #2f1215; border: 2px solid #ff4757; box-shadow: 0 0 10px rgba(255, 71, 87, 0.5); animation: pulse 1s infinite alternate; }
             @keyframes pulse { from { border-color: #ff4757; } to { border-color: #ffa502; } }
             
@@ -163,7 +170,6 @@ app.get('/', (req, res) => {
                 }
             }
 
-            // 0.3秒（300ミリ秒）ごとに画面を超爆速更新
             setInterval(updateList, 300);
             updateList();
         </script>
