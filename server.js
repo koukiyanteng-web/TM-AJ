@@ -16,10 +16,14 @@ app.get('/servers', async (req, res) => {
     }
 
     try {
-        const response = await fetch(`https://games.roblox.com/v1/games/${placeId}/servers/Public?sortOrder=Asc&limit=100`);
+        const url = `https://games.roblox.com/v1/games/${placeId}/servers/Public?sortOrder=Asc&limit=100`;
+        const response = await fetch(url);
         const data = await response.json();
-        const servers = data.data || [];
+        
+        // ログに出力して中身を確認できるようにする
+        console.log("Roblox API Response:", JSON.stringify(data));
 
+        const servers = data.data || [];
         const serverList = servers.map(server => ({
             jobId: server.id,
             playerCount: server.playing,
@@ -28,7 +32,8 @@ app.get('/servers', async (req, res) => {
 
         res.json(serverList);
     } catch (error) {
-        res.status(500).json({ error: "Failed to fetch servers" });
+        console.error("Error fetching servers:", error);
+        res.status(500).json({ error: "Failed to fetch servers", details: error.message });
     }
 });
 
