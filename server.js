@@ -4,38 +4,32 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-let serverList = [];
-
-// Roblox側がアクセスしている /secure ルートを追加
 app.get('/secure', (req, res) => {
     res.status(200).json({ success: true, message: "Connected successfully" });
 });
 
-// データを追加・更新するルート
-app.post('/update', (req, res) => {
-    const data = req.body;
-    const updates = Array.isArray(data) ? data : [data];
+app.get('/servers', async (req, res) => {
+    const placeId = req.query.placeId;
+    
+    if (!placeId) {
+        return res.status(400).json({ error: "PlaceId is required" });
+    }
 
-    updates.forEach(item => {
-        if (item && item.jobId) {
-            item.lastUpdated = Date.now();
-            const index = serverList.findIndex(s => s.jobId === item.jobId);
-            if (index >= 0) {
-                serverList[index] = item;
-            } else {
-                serverList.push(item);
-            }
-        }
-    });
+    try {
+        const response = await fetch(`https://games.roblox.com/v1/games/${placeId}/servers/Public?sortOrder=Asc&limit=100`);
+        const data = await response.json();
+        const servers = data.data || [];
 
-    res.status(200).json({ success: true });
-});
+        const serverList = servers.map(server => ({
+            jobId: server.id,
+            playerCount: server.playing,
+            maxPlayers: server.maxPlayers
+        }));
 
-// データを取得するルート
-app.get('/servers', (req, res) => {
-    const now = Date.now();
-    serverList = serverList.filter(s => now - s.lastUpdated < 180000);
-    res.json(serverList);
+        res.json(serverList);
+    } catch (error) {
+        res.status(500).json({ error: "Failed to fetch servers" });
+    }
 });
 
 app.listen(PORT, () => {
